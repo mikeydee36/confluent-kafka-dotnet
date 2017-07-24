@@ -268,15 +268,18 @@ namespace Confluent.Kafka
         /// </param>
         public Producer(IEnumerable<KeyValuePair<string, object>> config, bool manualPoll, bool disableDeliveryReports)
         {
-            this.topicConfig = (IEnumerable<KeyValuePair<string, object>>)config.FirstOrDefault(prop => prop.Key == "default.topic.config").Value;
+            ManualConfigSettings configSettings = ManualConfigSettings.CreateFromConfigKeyValuePairs(config);
+
+            this.topicConfig = configSettings.DefaultTopic;
             this.manualPoll = manualPoll;
             this.disableDeliveryReports = disableDeliveryReports;
 
             var configHandle = SafeConfigHandle.Create();
-            config
-                .Where(prop => prop.Key != "default.topic.config")
-                .ToList()
-                .ForEach((kvp) => { configHandle.Set(kvp.Key, kvp.Value.ToString()); });
+
+            foreach (KeyValuePair<string, object> configSetting in configSettings.UnprocessedConfigKeyValuePairs)
+            {
+                configHandle.Set(configSetting.Key, configSetting.Value.ToString());
+            }
 
             IntPtr configPtr = configHandle.DangerousGetHandle();
 
@@ -295,6 +298,8 @@ namespace Confluent.Kafka
             LibRdKafka.conf_set_error_cb(configPtr, errorDelegate);
             LibRdKafka.conf_set_log_cb(configPtr, logDelegate);
             LibRdKafka.conf_set_stats_cb(configPtr, statsDelegate);
+
+            ManualConfigSettingsProcessor.ProcessConfigSettings(configHandle, configPtr, configSettings);
 
             this.kafkaHandle = SafeKafkaHandle.Create(RdKafkaType.Producer, configPtr);
             configHandle.SetHandleAsInvalid(); // config object is no longer useable.

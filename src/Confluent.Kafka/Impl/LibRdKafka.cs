@@ -21,7 +21,7 @@ using System.IO;
 using System.Text;
 using System.Runtime.InteropServices;
 using Confluent.Kafka.Internal;
-#if NET45 || NET46
+#if !NETSTANDARD1_3
 using System.Reflection;
 using System.ComponentModel;
 #endif
@@ -37,7 +37,7 @@ namespace Confluent.Kafka.Impl
         // max length for error strings built by librdkafka
         internal const int MaxErrorStringLength = 512;
 
-#if NET45 || NET46
+#if !NETSTANDARD1_3
         [Flags]
         public enum LoadLibraryFlags : uint
         {
@@ -87,7 +87,7 @@ namespace Confluent.Kafka.Impl
 
         static LibRdKafka()
         {
-#if NET45 || NET46
+#if !NETSTANDARD1_3
             try
             {
                 // In net45, we don't put the native dlls in the assembly directory
@@ -122,6 +122,7 @@ namespace Confluent.Kafka.Impl
             _conf_destroy = NativeMethods.rd_kafka_conf_destroy;
             _conf_dup = NativeMethods.rd_kafka_conf_dup;
             _conf_set = NativeMethods.rd_kafka_conf_set;
+            _conf_set_bytes = NativeMethods.rd_kafka_conf_set_bytes;
             _conf_set_dr_msg_cb = NativeMethods.rd_kafka_conf_set_dr_msg_cb;
             _conf_set_rebalance_cb = NativeMethods.rd_kafka_conf_set_rebalance_cb;
             _conf_set_error_cb = NativeMethods.rd_kafka_conf_set_error_cb;
@@ -273,6 +274,43 @@ namespace Confluent.Kafka.Impl
         internal static ConfRes conf_set(IntPtr conf, string name,
                 string value, StringBuilder errstr, UIntPtr errstr_size)
             => _conf_set(conf, name, value, errstr, errstr_size);
+
+        private static Func<IntPtr, string, IntPtr, uint, StringBuilder, UIntPtr, ConfRes> _conf_set_bytes;
+        internal static void conf_set_bytes(IntPtr conf, string name, byte[] value)
+        {
+            var errorStringBuilder = new StringBuilder(MaxErrorStringLength);
+
+            IntPtr pointerToValueBytes = Marshal.AllocHGlobal(value.Length);
+
+            try
+            {
+                Marshal.Copy(value, 0, pointerToValueBytes, value.Length);
+
+                ConfRes result = _conf_set_bytes(
+                    conf,
+                    name,
+                    pointerToValueBytes,
+                    (uint)value.Length,
+                    errorStringBuilder,
+                    (UIntPtr)errorStringBuilder.Capacity);
+
+                switch (result)
+                {
+                    case ConfRes.Ok:
+                        return;
+                    case ConfRes.Invalid:
+                    case ConfRes.Unknown:
+                        throw new InvalidOperationException(errorStringBuilder.ToString());
+                    default:
+                        throw new Exception(
+                            string.Format("Unknown error while setting bytes for property \"{0}\"", name));
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(pointerToValueBytes);
+            }
+        }
 
         private static Action<IntPtr, DeliveryReportDelegate> _conf_set_dr_msg_cb;
         internal static void conf_set_dr_msg_cb(IntPtr conf, DeliveryReportDelegate dr_msg_cb)
@@ -593,6 +631,15 @@ namespace Confluent.Kafka.Impl
                     IntPtr conf,
                     [MarshalAs(UnmanagedType.LPStr)] string name,
                     [MarshalAs(UnmanagedType.LPStr)] string value,
+                    StringBuilder errstr,
+                    UIntPtr errstr_size);
+
+            [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern ConfRes rd_kafka_conf_set_bytes(
+                    IntPtr conf,
+                    [MarshalAs(UnmanagedType.LPStr)] string name,
+                    IntPtr pointerToBytes,
+                    uint lengthOfBytes,
                     StringBuilder errstr,
                     UIntPtr errstr_size);
 
